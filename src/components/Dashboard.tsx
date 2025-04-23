@@ -5,11 +5,11 @@ import ParameterCard from './ParameterCard';
 import ParameterChart from './ParameterChart';
 import EquipmentStatus from './EquipmentStatus';
 import ThresholdSettings from './ThresholdSettings';
-import { AlertTriangle, Settings, ArrowLeft, Home } from 'lucide-react';
+import { AlertTriangle, ArrowLeft } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 const Dashboard: React.FC = () => {
-  const equipmentId = 'mock-equipment-1';
+  const equipmentId = 'E9VvjykC6lBiuf8XdqvQ'; // Updated to match your Firebase document ID
   const { 
     equipment,
     loading, 

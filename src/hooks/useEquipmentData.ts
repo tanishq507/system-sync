@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { getEquipment, generateMockData } from '../services/equipmentService';
+import { collection, query, orderBy, limit, onSnapshot, doc } from 'firebase/firestore';
+import { db } from '../firebase/config';
 import { Equipment, Reading, AlertState, ThresholdConfig } from '../types/equipment';
 
 // Default threshold configuration
@@ -23,7 +24,7 @@ export const useEquipmentData = (equipmentId: string) => {
     vibration: false
   });
   const [thresholds, setThresholds] = useState<ThresholdConfig>(DEFAULT_THRESHOLDS);
-  const [mockData, setMockData] = useState<Reading[]>([]);
+  const [readings, setReadings] = useState<Reading[]>([]);
 
   // Update alerts based on latest readings and thresholds
   const updateAlerts = (latestReading: Reading) => {
@@ -36,52 +37,63 @@ export const useEquipmentData = (equipmentId: string) => {
     });
   };
 
-  // For demo purposes, generate mock data and update equipment
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const newReading = generateMockData();
-      setMockData(prev => [...prev.slice(-29), newReading]);
-      updateAlerts(newReading);
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [thresholds]);
-
-  // Fetch equipment data
+  // Fetch equipment data and readings
   useEffect(() => {
     setLoading(true);
     
     try {
-      // For development, we'll use both Firebase and mock data
-      const unsubscribe = getEquipment(equipmentId, (equipmentData) => {
-        if (equipmentData) {
-          setEquipment(equipmentData);
+      // Subscribe to equipment document
+      const unsubscribeEquipment = onSnapshot(doc(db, 'equipment', equipmentId), (doc) => {
+        if (doc.exists()) {
+          setEquipment({ id: doc.id, ...doc.data() } as Equipment);
         } else {
-          // If equipment doesn't exist in Firebase, create mock equipment
-          const mockEquipment: Equipment = {
-            id: 'mock-equipment-1',
-            name: 'Industrial Motor Unit #A42',
-            status: 'Operational',
-            health: 0.95,
-            lastMaintenance: '2025-04-16T12:41:23Z',
-            nextMaintenance: '2025-05-16T12:41:23Z',
-            readings: [],
-            anomalyThreshold: 0.1
-          };
-          setEquipment(mockEquipment);
+          setError('Equipment not found');
         }
+      }, (error) => {
+        console.error('Error fetching equipment:', error);
+        setError('Failed to fetch equipment data');
+      });
+
+      // Subscribe to readings collection
+      const readingsRef = collection(db, 'equipment', equipmentId, 'readings');
+      const readingsQuery = query(readingsRef, orderBy('timestamp', 'desc'), limit(30));
+      
+      const unsubscribeReadings = onSnapshot(readingsQuery, (snapshot) => {
+        const newReadings: Reading[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          // Calculate vibration from acceleration values if needed
+          const reading: Reading = {
+            ...data,
+            vibration: data.vibration || calculateVibration(data.accelerationX, data.accelerationY, data.accelerationZ),
+          } as Reading;
+          newReadings.push(reading);
+        });
+        
+        // Sort readings by timestamp
+        const sortedReadings = newReadings.sort((a, b) => 
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        );
+        
+        setReadings(sortedReadings);
+        
+        if (sortedReadings.length > 0) {
+          updateAlerts(sortedReadings[sortedReadings.length - 1]);
+        }
+        
+        setLoading(false);
+      }, (error) => {
+        console.error('Error fetching readings:', error);
+        setError('Failed to fetch readings');
         setLoading(false);
       });
 
-      // Generate initial mock data
-      const initialMockData: Reading[] = [];
-      for (let i = 0; i < 30; i++) {
-        initialMockData.push(generateMockData());
-      }
-      setMockData(initialMockData);
-      
-      return () => unsubscribe();
+      return () => {
+        unsubscribeEquipment();
+        unsubscribeReadings();
+      };
     } catch (err) {
+      console.error('Error in useEquipmentData:', err);
       setError('Failed to fetch equipment data');
       setLoading(false);
     }
@@ -97,8 +109,13 @@ export const useEquipmentData = (equipmentId: string) => {
     loading, 
     error, 
     alerts, 
-    mockData, 
+    mockData: readings, // Keep the same prop name for compatibility
     thresholds, 
     updateThresholds 
   };
+};
+
+// Helper function to calculate vibration from acceleration values
+const calculateVibration = (ax: number, ay: number, az: number): number => {
+  return Math.sqrt(ax * ax + ay * ay + az * az) / 16384.0; // Convert to g's
 };
